@@ -10,7 +10,15 @@ bashio::log.info "Starting SparkyFitness..."
 cd /opt/sparkyfitness/server \
     || bashio::exit.nok "Could not change to the application directory"
 
-# SparkyFitness runs straight from its TypeScript sources, the way upstream
-# runs it. It brings the database schema up to date itself, before it starts
+# Compiled from TypeScript when the app was built, see patches/compile.mjs.
+# SparkyFitness brings the database schema up to date itself, before it starts
 # listening.
-exec ./node_modules/.bin/tsx index.ts
+#
+# Node.js sizes the space new objects are made in by how much memory the
+# machine has, and loading SparkyFitness makes a great many of them that are
+# gone again right after. Left to size itself, it runs up to nearly half a
+# gigabyte while starting and hangs on to most of it, where it settles at
+# about half that with the space kept small. Only how often that space is
+# cleaned changes, not how much SparkyFitness can hold, so a large import or
+# restore has all the room it had before.
+exec node --max-semi-space-size=8 index.js

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Leave only what the SparkyFitness server runs on in its deployment.
 
-The server is deployed with its development dependencies, since it runs from
-its TypeScript sources through tsx, which is one of them. That brings the rest
-of them along: type checkers, linters, test runners. On top of that, pnpm
-links in the optional peers of several packages, because the workspace
-happens to have them: the Expo and React Native packages of the mobile app
-among them, which make up most of what is deployed. The server never loads any
-of it.
+The server is deployed with its development dependencies, since it is
+compiled from TypeScript in place, with the esbuild one of them brings along.
+Once that is done, none of them are needed: type checkers, linters, test
+runners, and the compiler itself. On top of that, pnpm links in the optional
+peers of several packages, because the workspace happens to have them: the
+Expo and React Native packages of the mobile app among them, which make up
+most of what is deployed. The server never loads any of it.
 
 pnpm lays a deployment out as a graph of links: every package sits in a
 directory of its own below node_modules/.pnpm, next to links to exactly the
 packages it depends on. So what the server can reach is found by following
-those links, starting from the dependencies it declares, plus tsx. Whatever is
-not reached is deleted.
+those links, starting from the dependencies it declares. Whatever is not
+reached is deleted.
 
 Before that, links to optional peers are cut, but only to peers the server
 never imports. trace-imports.mjs lists what it does import, following every
@@ -32,8 +32,6 @@ import re
 import shutil
 import sys
 from pathlib import Path
-
-EXTRA_ROOTS = ("tsx",)
 
 # What npm compares a package's "os", "cpu" and "libc" fields against.
 CURRENT = {
@@ -145,7 +143,7 @@ def main(argv: list[str]) -> int:
     before = size(node_modules)
 
     manifest = json.loads((root / "package.json").read_text(encoding="utf-8"))
-    roots = set(manifest.get("dependencies", {})) | set(EXTRA_ROOTS)
+    roots = set(manifest.get("dependencies", {}))
 
     try:
         missing = sorted(used - {e.name for e in store.iterdir()})
@@ -227,8 +225,6 @@ def main(argv: list[str]) -> int:
         for name in roots:
             if not (node_modules / name / "package.json").is_file():
                 raise PruneError(f"{name} did not survive pruning")
-        if not (node_modules / ".bin" / "tsx").is_file():
-            raise PruneError("tsx lost its script in .bin")
     except PruneError as err:
         print(f"Pruning the SparkyFitness server failed: {err}", file=sys.stderr)
         return 1

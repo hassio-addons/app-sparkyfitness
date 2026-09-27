@@ -28,9 +28,10 @@ COPY patches /patches
 # patches against upstream's code style.
 #
 # The server is deployed with its development dependencies, as upstream does
-# too: it runs straight from its TypeScript sources through tsx, which is one
-# of them. Everything it does not run on is then taken out again, which is
-# most of it; see patches/prune.py.
+# too, but then compiled to JavaScript right where it is, rather than compiled
+# again on every start the way upstream runs it; see patches/compile.mjs.
+# Everything it does not run on is then taken out again, which is most of it,
+# the compiler included; see patches/prune.py.
 # hadolint ignore=DL3016
 RUN \
     apk add --no-cache \
@@ -65,6 +66,7 @@ RUN \
         /opt/sparkyfitness/frontend \
     \
     && pnpm --filter sparkyfitnessserver deploy /opt/sparkyfitness/server \
+    && node /patches/compile.mjs /opt/sparkyfitness/server \
     && node /patches/trace-imports.mjs /opt/sparkyfitness/server \
         > /tmp/server-imports \
     && python3 /patches/prune.py /opt/sparkyfitness/server /tmp/server-imports

@@ -1,6 +1,7 @@
 /*
  * Lists the packages the SparkyFitness server imports, directly or through
  * other packages, by the name of the directory pnpm keeps each of them in.
+ * It runs on the compiled server, see compile.mjs.
  *
  * esbuild follows every import from the server's entry point the way it would
  * to bundle it, which is every import that can be known without running the
@@ -29,7 +30,7 @@ let unresolved = [];
 try {
   await build({
     absWorkingDir: server,
-    entryPoints: [path.join(server, 'index.ts')],
+    entryPoints: [path.join(server, 'index.js')],
     bundle: true,
     platform: 'node',
     format: 'esm',
