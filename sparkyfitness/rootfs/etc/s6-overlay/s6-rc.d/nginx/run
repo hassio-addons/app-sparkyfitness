@@ -1,0 +1,14 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Home Assistant Community App: SparkyFitness
+# Runs the NGINX daemon
+# ==============================================================================
+
+# SparkyFitness brings its database up to date before it listens, which takes
+# a while on the first start, and on the first start after an update.
+bashio::net.wait_for 3010 127.0.0.1 900
+
+bashio::log.info "Starting NGINX..."
+
+exec nginx

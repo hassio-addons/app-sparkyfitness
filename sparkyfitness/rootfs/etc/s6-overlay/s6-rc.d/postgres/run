@@ -1,0 +1,25 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Home Assistant Community App: SparkyFitness
+# Runs PostgreSQL
+# ==============================================================================
+
+# Only ever reachable over a socket inside this app. An empty listen_addresses
+# turns the network listener off entirely, which is why nothing here needs a
+# password: there is no way in from outside the container to use one on.
+mkdir -p /run/postgresql
+chown postgres:postgres /run/postgresql
+chmod 2775 /run/postgresql
+
+bashio::log.info "Starting PostgreSQL..."
+
+# Stopped with SIGINT rather than SIGTERM, see down-signal. SIGTERM asks
+# PostgreSQL to wait for every client to disconnect first, and the connections
+# SparkyFitness pools never do, so the app would only stop once it was killed.
+
+exec s6-setuidgid postgres \
+    "/usr/libexec/postgresql${PG_MAJOR}/postgres" \
+        -D /data/postgres \
+        -c listen_addresses= \
+        -c unix_socket_directories=/run/postgresql

@@ -1,0 +1,204 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Home Assistant Community App: SparkyFitness
+# Prepares the data directory, the secrets and the database cluster
+# ==============================================================================
+declare callback_base
+declare log_level
+declare name
+declare pg_existing
+declare pg_major
+declare url_pattern
+declare value
+
+readonly SECRETS_DIR="/data/secrets"
+readonly ENV_DIR="/var/run/s6/container_environment"
+
+# Everything SparkyFitness keeps lives here: the database, uploaded pictures,
+# the backups it makes of itself, and the files a restore is uploaded as.
+mkdir -p \
+    /data/backup \
+    /data/tmp \
+    /data/uploads \
+    "${SECRETS_DIR}"
+chmod 700 "${SECRETS_DIR}"
+
+# 32 random bytes, in the encoding named.
+random() {
+    node -e "process.stdout.write(require('crypto').randomBytes(32).toString('${1}'))"
+}
+
+# Reads a secret, making it on the first ever start. These have to outlive a
+# restart and an update: the encryption key protects the API keys users store
+# for AI and fitness services, and losing it makes those unreadable, while the
+# auth secret signs every session, and 2FA secrets are encrypted with it.
+secret() {
+    local file="${SECRETS_DIR}/${1}"
+    if ! bashio::fs.file_exists "${file}"; then
+        bashio::log.info "Generating the ${1} secret..."
+        "${@:2}" > "${file}"
+        chmod 600 "${file}"
+    fi
+    cat "${file}"
+}
+
+# Anything from the env_vars option goes in first, so that the settings this
+# app depends on, written below, win when the two disagree. Only the names are
+# logged, since this is where email and API passwords end up.
+for var in $(bashio::config 'env_vars|keys'); do
+    name=$(bashio::config "env_vars[${var}].name")
+    value=$(bashio::config "env_vars[${var}].value")
+    bashio::log.info "Setting the ${name} environment variable"
+    printf "%s" "${value}" > "${ENV_DIR}/${name}"
+done
+
+printf "%s" "production" > "${ENV_DIR}/NODE_ENV"
+
+printf "%s" "$(secret better_auth_secret random base64)" \
+    > "${ENV_DIR}/BETTER_AUTH_SECRET"
+printf "%s" "$(secret api_encryption_key random hex)" \
+    > "${ENV_DIR}/SPARKY_FITNESS_API_ENCRYPTION_KEY"
+
+# The database is only reachable over a socket inside this app, and trusts
+# every connection made over it, since the only way to make one is to already
+# be inside this app. SparkyFitness refuses to start without a password all the
+# same, so it gets real ones, which keep working should that ever change.
+printf "%s" "/run/postgresql" > "${ENV_DIR}/SPARKY_FITNESS_DB_HOST"
+printf "%s" "5432" > "${ENV_DIR}/SPARKY_FITNESS_DB_PORT"
+printf "%s" "sparkyfitness" > "${ENV_DIR}/SPARKY_FITNESS_DB_NAME"
+printf "%s" "sparky" > "${ENV_DIR}/SPARKY_FITNESS_DB_USER"
+printf "%s" "$(secret db_password random hex)" \
+    > "${ENV_DIR}/SPARKY_FITNESS_DB_PASSWORD"
+printf "%s" "sparky_app" > "${ENV_DIR}/SPARKY_FITNESS_APP_DB_USER"
+printf "%s" "$(secret app_db_password random hex)" \
+    > "${ENV_DIR}/SPARKY_FITNESS_APP_DB_PASSWORD"
+
+# SparkyFitness only listens on loopback, and only NGINX talks to it.
+printf "%s" "3010" > "${ENV_DIR}/SPARKY_FITNESS_SERVER_PORT"
+
+# SparkyFitness wants the address it is served from, to check the origin of
+# every sign-in against. Under Ingress that is whatever address Home Assistant
+# is reached at, which could be several and is not known here, so NGINX
+# vouches for the origin of a request instead, and presents it to
+# SparkyFitness as this. The .invalid domain is reserved never to exist, so no
+# browser can ever send it on its own.
+printf "%s" "http://sparkyfitness.invalid" \
+    > "${ENV_DIR}/SPARKY_FITNESS_FRONTEND_URL"
+
+# Fitbit, Strava and the other services that are connected by approving
+# SparkyFitness on their own site send the browser back to an address that has
+# to be registered with them beforehand. The Ingress path itself cannot be that
+# address: the cookie that lets a browser in there is one Home Assistant never
+# sends along when another site is what sent the browser. The page Home
+# Assistant shows the app on can be, and it hands the way back on to the app,
+# see patches/ha-base-path.js. That page lives at whatever address Home
+# Assistant is reached at, which only the user knows.
+if bashio::config.has_value 'home_assistant_url'; then
+    callback_base="$(bashio::config 'home_assistant_url')"
+    callback_base="${callback_base%%/}/app/$(bashio::app.slug)"
+    # Only a scheme, a host and the path made here, since this ends up in the
+    # page as it is.
+    url_pattern='^https?://[][A-Za-z0-9.:-]+/app/[a-z0-9_]+$'
+    if [[ ! "${callback_base}" =~ ${url_pattern} ]]; then
+        bashio::exit.nok \
+            "The home_assistant_url option should be just the address of" \
+            "Home Assistant, like https://homeassistant.example.com"
+    fi
+    printf "%s" "${callback_base}" \
+        > "${ENV_DIR}/SPARKY_FITNESS_OAUTH_CALLBACK_BASE"
+fi
+
+printf "%s" "/data/uploads" \
+    > "${ENV_DIR}/SPARKY_FITNESS_CUSTOM_UPLOADS_DIRECTORY"
+printf "%s" "/data/backup" \
+    > "${ENV_DIR}/SPARKY_FITNESS_CUSTOM_BACKUP_DIRECTORY"
+printf "%s" "/data/tmp" \
+    > "${ENV_DIR}/SPARKY_FITNESS_CUSTOM_TEMP_DIRECTORY"
+
+# The Garmin integration talks to a separate service of upstream's, which this
+# app does not ship. Pointed at a port nothing listens on, so it fails quickly
+# rather than reaching whatever else might answer on its default one.
+printf "%s" "http://127.0.0.1:1" > "${ENV_DIR}/GARMIN_MICROSERVICE_URL"
+
+# SparkyFitness has fewer levels than this app. It also logs every single
+# request it handles at its info level, which would bury everything else in
+# the app's log, so that level is kept for debugging. Its own debug level
+# writes out whole health records, GPS tracks and heart rate series included,
+# so that one is kept for trace.
+log_level="WARN"
+case "$(bashio::string.lower "$(bashio::config 'log_level' 'info')")" in
+    trace)                  log_level="DEBUG" ;;
+    debug)                  log_level="INFO" ;;
+    info|notice|warning)    log_level="WARN" ;;
+    error|fatal)            log_level="ERROR" ;;
+esac
+printf "%s" "${log_level}" > "${ENV_DIR}/SPARKY_FITNESS_LOG_LEVEL"
+
+# Read off what is actually installed rather than written down here, so this
+# can never drift from the version the image was built with.
+pg_major=$(
+    for dir in /usr/libexec/postgresql[0-9]*; do
+        echo "${dir##*/postgresql}"
+    done | sort -n | tail -n 1
+)
+if [[ ! "${pg_major}" =~ ^[0-9]+$ ]]; then
+    bashio::exit.nok "Could not find the PostgreSQL installation"
+fi
+printf "%s" "${pg_major}" > "${ENV_DIR}/PG_MAJOR"
+
+# PostgreSQL cannot read a data directory written by a different major version,
+# and an app update is the worst possible moment to discover that. Stopping
+# here with an explanation beats letting PostgreSQL fail with something the
+# logs make look like corruption.
+#
+# The release that actually moves between majors has to loosen this to let its
+# own upgrade step run. POSTGRES-UPGRADE.md covers what that involves.
+if bashio::fs.file_exists /data/postgres/PG_VERSION; then
+    pg_existing=$(</data/postgres/PG_VERSION)
+    if [[ "${pg_existing}" != "${pg_major}" ]]; then
+        bashio::log.fatal
+        bashio::log.fatal "This app now ships PostgreSQL ${pg_major}, but the database in"
+        bashio::log.fatal "/data was written by PostgreSQL ${pg_existing}."
+        bashio::log.fatal
+        bashio::log.fatal "PostgreSQL cannot read a data directory from another major"
+        bashio::log.fatal "version, and this app will not convert one behind your back."
+        bashio::log.fatal "Roll back to the previous version of this app, which will start"
+        bashio::log.fatal "normally, and follow the upgrade steps in its release notes."
+        bashio::log.fatal
+        bashio::exit.nok "Refusing to start on a PostgreSQL ${pg_existing} database"
+    fi
+fi
+
+# The cluster itself, made once on the first ever start.
+if ! bashio::fs.directory_exists /data/postgres/base; then
+    bashio::log.info "Creating the database, this happens once..."
+
+    mkdir -p /data/postgres
+    chown postgres:postgres /data/postgres
+    chmod 700 /data/postgres
+
+    # Every one of these matters beyond this command, because pg_upgrade
+    # refuses to run when the old and the new cluster disagree on them.
+    #
+    # Collation comes from PostgreSQL's own builtin provider rather than from
+    # the C library. Alpine's musl has next to no locale support to offer, and
+    # a sort order that belongs to PostgreSQL itself cannot change underneath
+    # the indexes with a base image update. Checksums are on because storage
+    # under Home Assistant is often an SD card worth catching corruption on.
+    s6-setuidgid postgres "/usr/libexec/postgresql${pg_major}/initdb" \
+        --pgdata=/data/postgres \
+        --encoding=UTF8 \
+        --locale=C \
+        --locale-provider=builtin \
+        --builtin-locale=C.UTF-8 \
+        --data-checksums \
+        --auth-local=trust \
+        --auth-host=reject \
+        || bashio::exit.nok "Failed creating the database"
+fi
+
+# A restore from a backup, or an app update, can leave these owned by somebody
+# else. PostgreSQL refuses to start on a directory it does not own.
+chown -R postgres:postgres /data/postgres
+chmod 700 /data/postgres

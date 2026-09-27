@@ -1,0 +1,16 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Home Assistant Community App: SparkyFitness
+# Runs the SparkyFitness server
+# ==============================================================================
+
+bashio::log.info "Starting SparkyFitness..."
+
+cd /opt/sparkyfitness/server \
+    || bashio::exit.nok "Could not change to the application directory"
+
+# SparkyFitness runs straight from its TypeScript sources, the way upstream
+# runs it. It brings the database schema up to date itself, before it starts
+# listening.
+exec ./node_modules/.bin/tsx index.ts

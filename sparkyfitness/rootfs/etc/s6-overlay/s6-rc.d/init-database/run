@@ -1,0 +1,54 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Home Assistant Community App: SparkyFitness
+# Creates the database and the role that owns it
+# ==============================================================================
+declare -i attempt
+
+readonly PGBIN="/usr/libexec/postgresql${PG_MAJOR}"
+
+# PostgreSQL has only just been asked to start, and it replays its write ahead
+# log before it accepts anything.
+attempt=0
+until s6-setuidgid postgres "${PGBIN}/pg_isready" -q -h /run/postgresql; do
+    attempt=$((attempt + 1))
+    if [[ ${attempt} -gt 60 ]]; then
+        bashio::exit.nok "PostgreSQL did not become ready in time"
+    fi
+    sleep 1
+done
+
+# SparkyFitness creates and migrates its own schema on every start, and
+# creates the second, restricted role it runs its queries as. What it needs
+# from here is a role that owns the database, and may do what that takes.
+#
+# That role is not a superuser. It may create roles, for that second one, and
+# databases, because SparkyFitness' own restore drops the database and makes it
+# anew. And it may end other connections to it, which that restore does first;
+# on PostgreSQL 18 autovacuum workers are a separate permission.
+#
+# All of it is applied on every start, so an existing installation picks up
+# whatever this learns later. What is already in place is not worth a notice.
+bashio::log.info "Preparing the database..."
+s6-setuidgid postgres "${PGBIN}/psql" \
+    -h /run/postgresql \
+    -d postgres \
+    -v ON_ERROR_STOP=1 \
+    -v owner="${SPARKY_FITNESS_DB_USER}" \
+    -v password="${SPARKY_FITNESS_DB_PASSWORD}" \
+    -v database="${SPARKY_FITNESS_DB_NAME}" \
+    -q <<'SQL' || bashio::exit.nok "Failed preparing the database"
+SET client_min_messages = warning;
+SELECT NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'owner') AS create_role \gset
+\if :create_role
+    CREATE ROLE :"owner" LOGIN;
+\endif
+ALTER ROLE :"owner" WITH LOGIN NOSUPERUSER CREATEROLE CREATEDB PASSWORD :'password';
+GRANT pg_signal_backend, pg_signal_autovacuum_worker TO :"owner";
+
+SELECT NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'database') AS create_database \gset
+\if :create_database
+    CREATE DATABASE :"database" OWNER :"owner" ENCODING 'UTF8';
+\endif
+SQL
