@@ -37,7 +37,7 @@ RUN \
     apk add --no-cache \
         nodejs=24.18.1-r0 \
         npm=11.12.1-r0 \
-        python3=3.14.7-r1 \
+        python3=3.14.8-r0 \
     \
     && curl -J -L -o /tmp/sparkyfitness.tar.gz \
         "https://github.com/CodeWithCJ/SparkyFitness/archive/refs/tags/v${SPARKYFITNESS_VERSION}.tar.gz" \
