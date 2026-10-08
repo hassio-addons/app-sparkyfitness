@@ -1,5 +1,5 @@
 ARG BUILD_FROM=ghcr.io/hassio-addons/base:21.0.8
-ARG SPARKYFITNESS_VERSION="1.7.2"
+ARG SPARKYFITNESS_VERSION="1.8.0"
 
 # SparkyFitness publishes container images, but as three separate ones: the
 # server, the client behind an NGINX of its own, and a database. This app is a
