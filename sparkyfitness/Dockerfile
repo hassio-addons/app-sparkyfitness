@@ -35,7 +35,7 @@ COPY patches /patches
 # hadolint ignore=DL3016
 RUN \
     apk add --no-cache \
-        nodejs=24.18.1-r0 \
+        nodejs \
         npm=11.12.1-r0 \
         python3=3.14.8-r0 \
     \
@@ -84,7 +84,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN \
     apk add --no-cache \
         nginx=1.30.6-r0 \
-        nodejs=24.18.1-r0 \
+        nodejs \
         postgresql18-client=18.6-r0 \
         postgresql18=18.6-r0 \
     \
