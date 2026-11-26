@@ -83,7 +83,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # that is a deliberate step, described in POSTGRES-UPGRADE.md.
 RUN \
     apk add --no-cache \
-        nginx=1.30.6-r0 \
+        nginx=1.30.8-r0 \
         nodejs=24.22.1-r0 \
         postgresql18-client=18.7-r0 \
         postgresql18=18.6-r0 \
