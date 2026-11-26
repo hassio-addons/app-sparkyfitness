@@ -86,7 +86,7 @@ RUN \
         nginx=1.30.8-r0 \
         nodejs=24.22.1-r0 \
         postgresql18-client=18.7-r0 \
-        postgresql18=18.6-r0 \
+        postgresql18=18.7-r0 \
     \
     && rm -f -r \
         /etc/nginx \
